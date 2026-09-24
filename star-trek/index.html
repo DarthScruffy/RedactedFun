@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Star Trek Tribute</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #AAAAAA; overflow: hidden; }
+  body { font-family: 'VT323', 'Lucida Console', 'Courier New', monospace; }
+  #wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; }
+  #crt { position: relative; padding: 0.4em 0.8em; background: #000; font-size: 16px;
+    box-shadow: 0 0 60px rgba(85, 255, 255, 0.15); border-radius: 0.6em; }
+  /* faint scanlines for that 14" monitor feel */
+  #crt::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 2px, rgba(0,0,0,0.22) 3px); }
+  #flash { position: absolute; inset: 0; pointer-events: none; background: #FF5555; opacity: 0; border-radius: inherit; }
+  #flash.on { animation: flash 0.35s ease-out; }
+  @keyframes flash { 0% { opacity: 0.35; } 100% { opacity: 0; } }
+  #crt.shake { animation: shake 0.25s linear; }
+  @keyframes shake { 0%,100% { transform: translate(0,0); } 20% { transform: translate(-4px,2px); }
+    40% { transform: translate(3px,-3px); } 60% { transform: translate(-3px,-1px); } 80% { transform: translate(2px,3px); } }
+  #term { width: 80ch; line-height: 1.2; text-shadow: 0 0 0.2em currentColor; }
+  #top { margin: 0; font: inherit; white-space: pre; height: calc(13 * 1.2em); overflow: hidden;
+    -webkit-user-select: none; user-select: none; }
+  #top i { font-style: normal; display: inline-block; width: 1ch; overflow: hidden; vertical-align: top; text-align: center; }
+  #top [data-t] { cursor: pointer; }
+  #sep { display: flex; align-items: center; height: 1.2em; color: #00AAAA; }
+  #sep::before, #sep::after { content: ""; flex: 1; border-top: 0.12em double #00AAAA; margin: 0 0.5ch; }
+  #log { height: calc(9 * 1.2em); overflow-y: auto; white-space: pre-wrap; word-break: break-word; scrollbar-width: none; }
+  #log::-webkit-scrollbar { display: none; }
+  #pline { display: flex; height: 1.2em; color: #FFFFFF; white-space: pre; }
+  #inp { flex: 1; min-width: 0; font: inherit; color: #FFFF55; background: transparent; border: 0; outline: 0; padding: 0;
+    text-transform: uppercase; caret-color: #FFFF55; text-shadow: inherit; }
+  #fkeys { display: flex; height: 1.2em; white-space: pre; -webkit-user-select: none; user-select: none; }
+  #fkeys span { width: 8ch; display: flex; cursor: pointer; }
+  #fkeys b { font-weight: normal; color: #FFFFFF; }
+  #fkeys em { font-style: normal; flex: 1; margin-right: 0.5ch; background: #00AAAA; color: #000; text-shadow: none; }
+  #fkeys span:hover em, #fkeys span:active em { background: #55FFFF; }
+  .bl { animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  #rotate { display: none; color: #555555; font-size: 14px; margin-top: 10px; }
+  @media (orientation: portrait) and (max-width: 700px) { #rotate { display: block; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="crt">
+    <div id="term">
+      <pre id="top"></pre>
+      <div id="sep">SHIP'S LOG</div>
+      <div id="log"></div>
+      <div id="pline"><span id="plabel"></span><input id="inp" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" aria-label="Command input"></div>
+      <div id="fkeys"></div>
+    </div>
+    <div id="flash"></div>
+  </div>
+  <div id="rotate">Tip: turn your phone sideways for a bigger screen.</div>
+</div>
+<script>
+'use strict';
+/* =====================================================================
+   STAR TREK - a fan-made tribute to the 1971 text classic and the
+   "Super Star Trek" DOS versions it spawned. 80x25 text mode, 16 colors.
+   Unofficial; not affiliated with CBS Studios or Paramount.
+   ===================================================================== */
+
+// ---------------------------------------------------------------- palette & helpers
+const COL = { k: '#000000', b: '#0000AA', g: '#00AA00', c: '#00AAAA', r: '#AA0000', m: '#AA00AA', n: '#AA5500', w: '#AAAAAA',
+              K: '#555555', B: '#5555FF', G: '#55FF55', C: '#55FFFF', R: '#FF5555', M: '#FF55FF', Y: '#FFFF55', W: '#FFFFFF' };
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const rnd = n => Math.floor(Math.random() * n);
+const num = v => String(Math.round(v * 100) / 100);
+const plural = (n, one, many) => n === 1 ? one : many;
+
+const topEl = $('#top'), logEl = $('#log'), inp = $('#inp'), plabel = $('#plabel'), crt = $('#crt');
+const finePointer = window.matchMedia('(pointer: fine)').matches;
+
+// ---------------------------------------------------------------- 80x13 text buffer for the upper panels
+const TW = 80, TH = 13;
+let buf = [], hoverTag = null;
+function clearBuf() {
+  buf = [];
+  for (let y = 0; y < TH; y++) {
+    const row = [];
+    for (let x = 0; x < TW; x++) row.push({ ch: ' ', fg: COL.w, bg: null, t: null, cls: null });
+    buf.push(row);
+  }
+}
+function put(x, y, str, fg = COL.w, bg = null, t = null, cls = null) {
+  str = String(str);
+  if (t && t === hoverTag && !bg) bg = COL.b;
+  for (let i = 0; i < str.length; i++) {
+    const xx = x + i;
+    if (xx < 0 || xx >= TW || y < 0 || y >= TH) continue;
+    Object.assign(buf[y][xx], { ch: str[i], fg, bg, t, cls });
+  }
+}
+const center = (y, str, fg, bg) => put(Math.floor((TW - str.length) / 2), y, str, fg, bg);
+function escCh(ch) { return ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch === '&' ? '&amp;' : ch; }
+function flush() {
+  let html = '';
+  for (let y = 0; y < TH; y++) {
+    let x = 0;
+    while (x < TW) {
+      const c = buf[y][x], key = c.fg + c.bg + c.t + c.cls;
+      let s = '', x2 = x;
+      for (; x2 < TW; x2++) {
+        const d = buf[y][x2];
+        if (d.fg + d.bg + d.t + d.cls !== key) break;
+        // non-ASCII glyphs (box drawing, blocks) get a fixed 1ch cell so the grid never drifts
+        s += d.ch.charCodeAt(0) < 128 ? escCh(d.ch) : '<i>' + d.ch + '</i>';
+      }
+      let attrs = 'style="color:' + c.fg + (c.bg ? ';background:' + c.bg : '') + '"';
+      if (c.t) attrs += ' data-t="' + c.t + '"';
+      if (c.cls) attrs += ' class="' + c.cls + '"';
+      html += '<span ' + attrs + '>' + s + '</span>';
+      x = x2;
+    }
+    if (y < TH - 1) html += '\n';
+  }
+  topEl.innerHTML = html;
+}
+
+// ---------------------------------------------------------------- ship's log
+function out(text = '', color = COL.w) {
+  const d = document.createElement('div');
+  d.textContent = text || ' ';
+  d.style.color = color;
+  logEl.appendChild(d);
+  while (logEl.children.length > 400) logEl.firstChild.remove();
+  logEl.scrollTop = logEl.scrollHeight;
+}
+async function say(text, color, ms = 25) { out(text, color); await sleep(ms); }
+
+// ---------------------------------------------------------------- sound (PC-speaker flavored)
+let AC = null, soundOn = true;
+function audio() {
+  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; } }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(f0, f1, dur, type = 'square', vol = 0.05, delay = 0) {
+  if (!soundOn) return;
+  const a = audio(); if (!a) return;
+  const t = a.currentTime + delay, o = a.createOscillator(), g = a.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t);
+  if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+}
+function noise(dur, vol = 0.2, delay = 0) {
+  if (!soundOn) return;
+  const a = audio(); if (!a) return;
+  const n = Math.floor(a.sampleRate * dur), b = a.createBuffer(1, n, a.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const s = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain();
+  f.type = 'lowpass'; f.frequency.value = 900; g.gain.value = vol;
+  s.buffer = b; s.connect(f); f.connect(g); g.connect(a.destination); s.start(a.currentTime + delay);
+}
+const SFX = {
+  key()     { tone(1200, 1200, 0.015, 'square', 0.015); },
+  phaser()  { tone(2200, 400, 0.55, 'sawtooth', 0.04); tone(2300, 450, 0.55, 'square', 0.02); },
+  torpedo() { tone(140, 900, 0.3, 'square', 0.05); },
+  boom()    { noise(0.8, 0.3); tone(90, 30, 0.6, 'square', 0.05); },
+  hit()     { noise(0.3, 0.25); tone(140, 50, 0.3, 'square', 0.07); },
+  alert()   { for (let i = 0; i < 3; i++) tone(480, 820, 0.3, 'square', 0.04, i * 0.38); },
+  warp()    { tone(60, 1400, 0.9, 'sine', 0.08); tone(90, 1800, 0.9, 'triangle', 0.03); },
+  dock()    { [523, 659, 784, 1047].forEach((f, i) => tone(f, f, 0.12, 'square', 0.035, i * 0.1)); },
+  shields() { tone(250, 700, 0.3, 'sine', 0.07); },
+  win()     { [392, 523, 659, 784, 659, 784, 1047].forEach((f, i) => tone(f, f, 0.18, 'square', 0.04, i * 0.16)); },
+  lose()    { [392, 370, 349, 262].forEach((f, i) => tone(f, f, 0.35, 'square', 0.04, i * 0.32)); },
+};
+function shake() { crt.classList.remove('shake'); void crt.offsetWidth; crt.classList.add('shake'); }
+function flashRed() { const f = $('#flash'); f.classList.remove('on'); void f.offsetWidth; f.classList.add('on'); }
+
+// ---------------------------------------------------------------- game constants
+const DEV = ['WARP ENGINES', 'SHORT RANGE SENSORS', 'LONG RANGE SENSORS', 'PHASER CONTROL',
+             'PHOTON TUBES', 'DAMAGE CONTROL', 'SHIELD CONTROL', 'LIBRARY-COMPUTER'];
+const WARP = 0, SRS = 1, LRS = 2, PHA = 3, TUB = 4, DMC = 5, SHC = 6, CMP = 7;
+const EMPTY = 0, SHIP = 1, KLING = 2, BASE = 3, STAR = 4;
+const E0 = 3000, P0 = 10;
+const SKILLS = [
+  { name: 'ENSIGN',  kp: [0.99, 0.97, 0.86], ke: 150, days: 32, blurb: 'SMALLER KLINGON FLEET, MORE TIME' },
+  { name: 'CAPTAIN', kp: [0.98, 0.95, 0.80], ke: 200, days: 25, blurb: 'THE CLASSIC MISSION' },
+  { name: 'ADMIRAL', kp: [0.97, 0.93, 0.74], ke: 260, days: 26, blurb: 'LARGE, TOUGH KLINGON FLEET' },
+];
+// region names from the 1978 "Super Star Trek"
+const NAMES1 = ['ANTARES', 'RIGEL', 'PROCYON', 'VEGA', 'CANOPUS', 'ALTAIR', 'SAGITTARIUS', 'POLLUX'];
+const NAMES2 = ['SIRIUS', 'DENEB', 'CAPELLA', 'BETELGEUSE', 'ALDEBARAN', 'REGULUS', 'ARCTURUS', 'SPICA'];
+const qname = (x, y) => (x < 4 ? NAMES1[y] : NAMES2[y]) + ' ' + ['I', 'II', 'III', 'IV'][x % 4];
+
+function loadBest() { try { return JSON.parse(localStorage.getItem('startrek-best') || '{}') || {}; } catch (e) { return {}; } }
+function saveBest(b) { try { localStorage.setItem('startrek-best', JSON.stringify(b)); } catch (e) { /* storage unavailable */ } }
+
+// ---------------------------------------------------------------- navigation math
+// Courses run counter-clockwise: 1 = east (right), 3 = north (up), 5 = west, 7 = south.
+// Each step moves one sector along the longer axis, like the original, so warp 1 = one quadrant.
+function courseVec(c) {
+  if (c >= 9) c -= 8;
+  const a = (c - 1) * Math.PI / 4;
+  const vx = Math.cos(a), vy = -Math.sin(a), m = Math.max(Math.abs(vx), Math.abs(vy));
+  return { x: vx / m, y: vy / m };
+}
+function courseTo(dx, dy) {
+  let a = Math.atan2(-dy, dx);
+  if (a < 0) a += 2 * Math.PI;
+  let c = Math.round((1 + a * 4 / Math.PI) * 100) / 100;
+  if (c >= 9) c = 1;
+  return c;
+}
+const dist = k => Math.hypot(k.x - G.sx, k.y - G.sy);
+
+// ---------------------------------------------------------------- game state
+let G = null, mode = 'title';
+
+function newGame(skill) {
+  const S = SKILLS[skill];
+  let gal, k9, b9;
+  do {
+    gal = []; k9 = 0; b9 = 0;
+    for (let y = 0; y < 8; y++) {
+      const row = [];
+      for (let x = 0; x < 8; x++) {
+        const r = Math.random();
+        const k = r > S.kp[0] ? 3 : r > S.kp[1] ? 2 : r > S.kp[2] ? 1 : 0;
+        const b = Math.random() > 0.96 ? 1 : 0;
+        row.push({ k, b, s: 1 + rnd(8) }); k9 += k; b9 += b;
+      }
+      gal.push(row);
+    }
+  } while (k9 < 5);
+  if (b9 === 0) {
+    const x = rnd(8), y = rnd(8);
+    if (gal[y][x].k < 2) { gal[y][x].k++; k9++; }
+    gal[y][x].b = 1; b9 = 1;
+  }
+  let days = S.days + rnd(10);
+  if (days < k9 + 2) days = k9 + 2;
+  const t0 = (20 + rnd(20)) * 100;
+  G = {
+    skill, S, gal, k9, k7: k9, b9, t0, t: t0, tlen: days,
+    known: Array.from({ length: 8 }, () => Array(8).fill(null)),
+    qx: rnd(8), qy: rnd(8), sx: rnd(8), sy: rnd(8),
+    energy: E0, shields: 0, torps: P0, dmg: Array(8).fill(0),
+    docked: false, cond: 'GREEN', over: null, started: false,
+    sec: null, kl: [], base: null, fx: null,
+  };
+}
+
+function emptySpot() {
+  for (;;) { const x = rnd(8), y = rnd(8); if (G.sec[y][x] === EMPTY) return { x, y }; }
+}
+function enterQuadrant() {
+  const q = G.gal[G.qy][G.qx];
+  G.sec = Array.from({ length: 8 }, () => Array(8).fill(EMPTY));
+  G.sec[G.sy][G.sx] = SHIP;
+  G.kl = [];
+  for (let i = 0; i < q.k; i++) {
+    const p = emptySpot(); G.sec[p.y][p.x] = KLING;
+    G.kl.push({ x: p.x, y: p.y, e: G.S.ke * (0.5 + Math.random()) });
+  }
+  G.base = null;
+  if (q.b) { const p = emptySpot(); G.sec[p.y][p.x] = BASE; G.base = p; }
+  for (let i = 0; i < q.s; i++) { const p = emptySpot(); G.sec[p.y][p.x] = STAR; }
+  G.docked = false;
+  G.known[G.qy][G.qx] = { ...q };
+}
+async function announceQuadrant(start) {
+  const name = qname(G.qx, G.qy);
+  if (start) out(`YOUR MISSION BEGINS WITH YOUR STARSHIP LOCATED IN THE GALACTIC QUADRANT, '${name}'.`, COL.C);
+  else out(`NOW ENTERING ${name} QUADRANT . . .`, COL.C);
+  if (G.kl.length) {
+    out('COMBAT AREA      CONDITION RED', COL.R);
+    if (G.shields <= 200) out('   SHIELDS DANGEROUSLY LOW', COL.R);
+    SFX.alert();
+  }
+  if (G.dmg[LRS] >= 0) scanLRS();
+  updateCondition();
+  render();
+}
+function scanLRS() {
+  for (let y = G.qy - 1; y <= G.qy + 1; y++)
+    for (let x = G.qx - 1; x <= G.qx + 1; x++)
+      if (x >= 0 && x < 8 && y >= 0 && y < 8) G.known[y][x] = { ...G.gal[y][x] };
+}
+function updateCondition() {
+  const dock = !!G.base && Math.abs(G.base.x - G.sx) <= 1 && Math.abs(G.base.y - G.sy) <= 1;
+  if (dock && !G.docked) {
+    out('DOCKED AT STARBASE. SHIELDS DROPPED FOR DOCKING PURPOSES;', COL.G);
+    out('ENERGY AND PHOTON TORPEDOES REPLENISHED.', COL.G);
+    SFX.dock();
+  }
+  if (dock) { G.energy = E0; G.torps = P0; G.shields = 0; }
+  G.docked = dock;
+  G.cond = dock ? 'DOCKED' : G.kl.length ? 'RED' : G.energy < E0 * 0.1 ? 'YELLOW' : 'GREEN';
+  G.known[G.qy][G.qx] = { ...G.gal[G.qy][G.qx] };
+}
+function killKlingon(k) {
+  G.sec[k.y][k.x] = EMPTY;
+  G.kl.splice(G.kl.indexOf(k), 1);
+  G.gal[G.qy][G.qx].k--; G.k9--;
+  G.known[G.qy][G.qx] = { ...G.gal[G.qy][G.qx] };
+  if (G.k9 <= 0) G.over = 'win';
+}
+
+// ---------------------------------------------------------------- effects on the scanner
+async function explodeAt(x, y) {
+  SFX.boom();
+  const frames = [[' * ', COL.Y], ['*#*', COL.W], ['###', COL.Y], ['#*#', COL.R], [' . ', COL.K]];
+  for (const [ch, fg] of frames) { G.fx = [{ x, y, ch, fg }]; render(); await sleep(90); }
+  G.fx = null;
+}
+function linePts(x0, y0, x1, y1) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)), pts = [];
+  for (let i = 1; i < n; i++) pts.push({ x: Math.round(x0 + (x1 - x0) * i / n), y: Math.round(y0 + (y1 - y0) * i / n) });
+  return pts;
+}
+async function warpAnim() {
+  SFX.warp();
+  for (let f = 0; f < 16; f++) {
+    G.fx = [];
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      const r = Math.random();
+      G.fx.push({ x, y, ch: r < 0.22 ? '---' : r < 0.4 ? ' - ' : '   ', fg: r < 0.08 ? COL.W : r < 0.22 ? COL.C : COL.B });
+    }
+    render(); await sleep(50);
+  }
+  G.fx = null;
+}
+
+// ---------------------------------------------------------------- klingons shoot back
+async function klingonsFire() {
+  if (!G.kl.length || G.over) return;
+  if (G.docked) { out('STARBASE SHIELDS PROTECT THE ENTERPRISE.', COL.G); return; }
+  for (const k of G.kl) {
+    if (k.e <= 0) continue;
+    const h = Math.floor((k.e / dist(k)) * (2 + Math.random()));
+    G.shields -= h; k.e /= (3 + Math.random());
+    G.fx = [{ x: k.x, y: k.y, ch: '+K+', fg: COL.Y, bg: COL.r }, ...linePts(k.x, k.y, G.sx, G.sy).map(p => ({ ...p, ch: ' ~ ', fg: COL.R }))];
+    render(); SFX.hit(); shake(); flashRed();
+    out(`${h} UNIT HIT ON ENTERPRISE FROM SECTOR ${k.x + 1},${k.y + 1}`, COL.R);
+    await sleep(380); G.fx = null;
+    if (G.shields < 0) { G.over = 'dead'; render(); return; }
+    out(`      <SHIELDS DOWN TO ${Math.floor(G.shields)} UNITS>`, COL.Y);
+    if (h >= 20 && Math.random() <= 0.6 && (G.shields === 0 || h / G.shields > 0.02)) {
+      const r = rnd(8);
+      G.dmg[r] -= Math.min(5, h / Math.max(G.shields, 1)) + 0.5 * Math.random();
+      out(`DAMAGE CONTROL REPORTS '${DEV[r]}' DAMAGED BY THE HIT`, COL.R);
+    }
+    render();
+  }
+}
+
+// ---------------------------------------------------------------- prompts & input
+let pending = null, queued = null, args = [];
+const history = []; let hIdx = 0;
+function ask(label, isCmd = false) {
+  plabel.textContent = label + '? ';
+  inp.value = '';
+  if (finePointer) inp.focus();
+  return new Promise(res => { pending = { res, label, isCmd }; });
+}
+function answer(v, echo = true) {
+  if (!pending) return;
+  const p = pending; pending = null; plabel.textContent = '';
+  if (echo) out(`${p.label}? ${v}`, COL.W);
+  p.res(v);
+}
+async function arg(label) { return args.length ? args.shift() : await ask(label); }
+async function argPair(label, dflt) {
+  let s;
+  if (args.length >= 2) s = args.shift() + ',' + args.shift();
+  else s = await ask(label);
+  if (s === '' && dflt) return dflt;
+  const m = s.match(/-?\d+(\.\d+)?/g);
+  if (!m || m.length < 2) return null;
+  return [parseFloat(m[0]), parseFloat(m[1])];
+}
+// Clicks on the scanner, chart and function bar become typed commands so players learn the syntax.
+function submitCommand(str) {
+  if (!G || !G.started || G.over) return;
+  if (pending && pending.isCmd) answer(str);
+  else { queued = str; if (pending) answer('', false); }
+}
+function toggleView(v) {
+  const home = G && G.started ? 'bridge' : 'title';
+  if (mode === v) { mode = home; render(); return; }
+  if (v === 'chart') {
+    if (!G || !G.started) return;
+    if (G.dmg[CMP] < 0) { out('LIBRARY-COMPUTER IS DAMAGED - GALACTIC RECORD UNAVAILABLE.', COL.R); return; }
+  }
+  mode = v; render();
+}
+function toggleSound() { soundOn = !soundOn; drawFkeys(); if (soundOn) SFX.dock(); }
+
+// ---------------------------------------------------------------- commands
+async function doCommand(line) {
+  const tok = line.trim().toUpperCase().split(/[\s,]+/).filter(Boolean);
+  if (!tok.length) return;
+  const c = tok.shift().slice(0, 3);
+  args = tok;
+  switch (c) {
+    case 'NAV': case 'WAR': case 'MOV': mode = 'bridge'; await cmdNav(); break;
+    case 'SRS': case 'SHO': mode = 'bridge'; cmdSrs(); break;
+    case 'LRS': case 'LON': mode = 'bridge'; cmdLrs(); break;
+    case 'PHA': mode = 'bridge'; await cmdPha(); break;
+    case 'TOR': case 'PHO': mode = 'bridge'; await cmdTor(); break;
+    case 'SHE': mode = 'bridge'; await cmdShe(); break;
+    case 'DAM': await cmdDam(); break;
+    case 'COM': await cmdCom(); break;
+    case 'CHA': case 'GAL': case 'MAP': if (mode !== 'chart') toggleView('chart'); break;
+    case 'HEL': case '?': if (mode !== 'help') toggleView('help'); break;
+    case 'SOU': case 'SND': case 'MUT': toggleSound(); out(soundOn ? 'SOUND ON.' : 'SOUND OFF.'); break;
+    case 'XXX': case 'QUI': case 'RES': {
+      const a = await ask('RESIGN YOUR COMMAND (Y/N)');
+      if (a.startsWith('Y')) G.over = 'resign';
+      break;
+    }
+    default:
+      out('ENTER ONE OF THE FOLLOWING:', COL.Y);
+      out('  NAV (WARP)  SRS  LRS  PHA (PHASERS)  TOR (TORPEDO)  SHE (SHIELDS)', COL.Y);
+      out('  DAM (DAMAGE)  COM (COMPUTER)  CHA (CHART)  HELP  XXX (RESIGN)', COL.Y);
+  }
+  args = [];
+}
+
+async function cmdNav() {
+  const cs = await arg('COURSE (1-9)'); if (cs === '') return;
+  const c = parseFloat(cs);
+  if (!(c >= 1 && c <= 9)) { out("LT. SULU REPORTS, 'INCORRECT COURSE DATA, SIR!'", COL.Y); return; }
+  const maxW = G.dmg[WARP] < 0 ? 0.2 : 8;
+  const ws = await arg(`WARP FACTOR (0-${maxW})`); if (ws === '') return;
+  const w = parseFloat(ws);
+  if (!(w > 0)) return;
+  if (w > maxW) {
+    if (G.dmg[WARP] < 0 && w <= 8) out('WARP ENGINES ARE DAMAGED.  MAXIMUM SPEED = WARP 0.2', COL.R);
+    else out(`CHIEF ENGINEER SCOTT REPORTS 'THE ENGINES WON'T TAKE WARP ${num(w)}!'`, COL.Y);
+    return;
+  }
+  const n = Math.round(w * 8);
+  if (n < 1) { out('THAT WON\'T MOVE US A SINGLE SECTOR, CAPTAIN. (MINIMUM WARP 0.125)', COL.Y); return; }
+  if (G.energy - n < 0) {
+    out(`ENGINEERING REPORTS 'INSUFFICIENT ENERGY AVAILABLE`, COL.R);
+    out(`                     FOR MANEUVERING AT WARP ${num(w)}!'`, COL.R);
+    if (G.shields >= n - G.energy && G.dmg[SHC] >= 0)
+      out(`DEFLECTOR CONTROL ROOM ACKNOWLEDGES ${Math.floor(G.shields)} UNITS OF ENERGY PRESENTLY DEPLOYED TO SHIELDS.`, COL.Y);
+    return;
+  }
+  // klingons jockey for position and fire on the moving starship
+  if (G.kl.length) {
+    for (const k of G.kl) { G.sec[k.y][k.x] = EMPTY; const p = emptySpot(); k.x = p.x; k.y = p.y; G.sec[p.y][p.x] = KLING; }
+    render();
+    await klingonsFire();
+    if (G.over) return;
+  }
+  repairsInTransit(w);
+  // move
+  const v = courseVec(c), sx0 = G.sx, sy0 = G.sy;
+  let left = false, blocked = null;
+  for (let i = 1; i <= n; i++) {
+    const ix = Math.round(sx0 + v.x * i), iy = Math.round(sy0 + v.y * i);
+    if (ix < 0 || ix > 7 || iy < 0 || iy > 7) { left = true; break; }
+    if (ix === G.sx && iy === G.sy) continue;
+    if (G.sec[iy][ix] !== EMPTY) { blocked = G.sec[iy][ix]; break; }
+    G.sec[G.sy][G.sx] = EMPTY; G.sx = ix; G.sy = iy; G.sec[iy][ix] = SHIP;
+    render(); await sleep(n > 8 ? 20 : 55);
+  }
+  if (blocked !== null && blocked !== BASE)
+    out(`WARP ENGINES SHUT DOWN AT SECTOR ${G.sx + 1},${G.sy + 1} DUE TO BAD NAVIGATION.`, COL.Y);
+  if (left) {
+    G.sec[G.sy][G.sx] = EMPTY;
+    let ax = Math.round(G.qx * 8 + sx0 + v.x * n), ay = Math.round(G.qy * 8 + sy0 + v.y * n), perim = false;
+    if (ax < 0) { ax = 0; perim = true; } if (ax > 63) { ax = 63; perim = true; }
+    if (ay < 0) { ay = 0; perim = true; } if (ay > 63) { ay = 63; perim = true; }
+    const nqx = ax >> 3, nqy = ay >> 3;
+    if (perim) {
+      out('LT. UHURA REPORTS MESSAGE FROM STARFLEET COMMAND:', COL.Y);
+      out("  'PERMISSION TO ATTEMPT CROSSING OF GALACTIC PERIMETER", COL.Y);
+      out("  IS HEREBY *DENIED*.  SHUT DOWN YOUR ENGINES.'", COL.Y);
+      out(`CHIEF ENGINEER SCOTT REPORTS 'WARP ENGINES SHUT DOWN AT SECTOR ${(ax & 7) + 1},${(ay & 7) + 1} OF QUADRANT ${nqx + 1},${nqy + 1}.'`, COL.Y);
+    }
+    if (nqx === G.qx && nqy === G.qy) {
+      if (G.sec[ay & 7][ax & 7] === EMPTY) { G.sx = ax & 7; G.sy = ay & 7; }
+      G.sec[G.sy][G.sx] = SHIP;
+    } else {
+      G.qx = nqx; G.qy = nqy; G.sx = ax & 7; G.sy = ay & 7;
+      await warpAnim();
+      enterQuadrant();
+      await announceQuadrant(false);
+    }
+  }
+  G.energy -= n + 10;
+  if (G.energy < 0) {
+    out('SHIELD CONTROL SUPPLIES ENERGY TO COMPLETE THE MANEUVER.', COL.Y);
+    G.shields += G.energy; G.energy = 0;
+    if (G.shields < 0) G.shields = 0;
+  }
+  G.t += w >= 1 ? 1 : Math.max(0.1, Math.floor(10 * w) / 10);
+}
+function repairsInTransit(w) {
+  const d6 = w >= 1 ? 1 : w;
+  let header = false;
+  for (let i = 0; i < 8; i++) {
+    if (G.dmg[i] >= 0) continue;
+    G.dmg[i] += d6;
+    if (G.dmg[i] > -0.1 && G.dmg[i] < 0) G.dmg[i] = -0.1;
+    else if (G.dmg[i] >= 0) {
+      if (!header) out('DAMAGE CONTROL REPORT:', COL.G);
+      header = true;
+      out(`        ${DEV[i]} REPAIR COMPLETED.`, COL.G);
+    }
+  }
+  if (Math.random() <= 0.2) {
+    const r = rnd(8);
+    if (Math.random() < 0.6) {
+      G.dmg[r] -= Math.random() * 5 + 1;
+      out(`DAMAGE CONTROL REPORT:  ${DEV[r]} DAMAGED`, COL.R);
+    } else {
+      G.dmg[r] += Math.random() * 3 + 1;
+      out(`DAMAGE CONTROL REPORT:  ${DEV[r]} STATE OF REPAIR IMPROVED`, COL.G);
+    }
+  }
+}
+
+function cmdSrs() {
+  if (G.dmg[SRS] < 0) { out('*** SHORT RANGE SENSORS ARE OUT ***', COL.R); return; }
+  const nb = G.base ? 1 : 0, ns = G.gal[G.qy][G.qx].s;
+  out(`SHORT RANGE SCAN OF ${qname(G.qx, G.qy)}: ${G.kl.length} ${plural(G.kl.length, 'KLINGON', 'KLINGONS')}, ` +
+      `${nb} ${plural(nb, 'STARBASE', 'STARBASES')}, ${ns} ${plural(ns, 'STAR', 'STARS')}.`, COL.C);
+  for (const k of G.kl) out(`   KLINGON BATTLE CRUISER AT SECTOR ${k.x + 1},${k.y + 1}`, COL.R);
+  if (G.base) out(`   STARBASE AT SECTOR ${G.base.x + 1},${G.base.y + 1}`, COL.G);
+}
+
+function cmdLrs() {
+  if (G.dmg[LRS] < 0) { out('LONG RANGE SENSORS ARE INOPERABLE.', COL.R); return; }
+  scanLRS();
+  out(`LONG RANGE SCAN FOR QUADRANT ${G.qx + 1},${G.qy + 1}`, COL.C);
+  out('-------------------', COL.K);
+  for (let y = G.qy - 1; y <= G.qy + 1; y++) {
+    let s = ':';
+    for (let x = G.qx - 1; x <= G.qx + 1; x++) {
+      if (x < 0 || x > 7 || y < 0 || y > 7) s += ' *** :';
+      else { const q = G.gal[y][x]; s += ` ${q.k}${q.b}${q.s} :`; }
+    }
+    out(s, COL.W);
+    out('-------------------', COL.K);
+  }
+}
+
+async function cmdPha() {
+  if (G.dmg[PHA] < 0) { out('PHASERS INOPERATIVE.', COL.R); return; }
+  if (!G.kl.length) {
+    out("SCIENCE OFFICER SPOCK REPORTS 'SENSORS SHOW NO ENEMY SHIPS", COL.Y);
+    out("                                IN THIS QUADRANT.'", COL.Y);
+    return;
+  }
+  if (G.dmg[CMP] < 0) out('COMPUTER FAILURE HAMPERS ACCURACY.', COL.R);
+  out(`PHASERS LOCKED ON TARGET;  ENERGY AVAILABLE = ${Math.floor(G.energy)} UNITS`, COL.C);
+  const s = await arg('NUMBER OF UNITS TO FIRE'); if (s === '') return;
+  let x = parseFloat(s);
+  if (!(x > 0)) return;
+  if (x > G.energy) { out(`NOT ENOUGH ENERGY, CAPTAIN. ONLY ${Math.floor(G.energy)} UNITS AVAILABLE.`, COL.Y); return; }
+  G.energy -= x;
+  if (G.dmg[CMP] < 0) x *= Math.random();
+  // the beams
+  SFX.phaser();
+  G.fx = [];
+  for (const k of G.kl) G.fx.push(...linePts(G.sx, G.sy, k.x, k.y).map(p => ({ ...p, ch: ' : ', fg: COL.C })));
+  for (let f = 0; f < 4; f++) { G.fx.forEach(e => e.fg = f % 2 ? COL.W : COL.C); render(); await sleep(110); }
+  G.fx = null;
+  const h1 = x / G.kl.length;
+  for (const k of [...G.kl]) {
+    const h = Math.floor((h1 / dist(k)) * (Math.random() + 2));
+    if (h <= 0.15 * k.e) { out(`SENSORS SHOW NO DAMAGE TO ENEMY AT ${k.x + 1},${k.y + 1}`, COL.Y); continue; }
+    k.e -= h;
+    out(`${h} UNIT HIT ON KLINGON AT SECTOR ${k.x + 1},${k.y + 1}`, COL.C);
+    if (k.e <= 0) { await explodeAt(k.x, k.y); out('*** KLINGON DESTROYED ***', COL.G); killKlingon(k); }
+    else out(`   (SENSORS SHOW ${Math.round(k.e)} UNITS REMAINING)`, COL.w);
+    render(); await sleep(120);
+  }
+  if (G.over) return;
+  await klingonsFire();
+}
+
+async function cmdTor() {
+  if (G.torps <= 0) { out('ALL PHOTON TORPEDOES EXPENDED.', COL.R); return; }
+  if (G.dmg[TUB] < 0) { out('PHOTON TUBES ARE NOT OPERATIONAL.', COL.R); return; }
+  const s = await arg('PHOTON TORPEDO COURSE (1-9)'); if (s === '') return;
+  const c = parseFloat(s);
+  if (!(c >= 1 && c <= 9)) { out("ENSIGN CHEKOV REPORTS, 'INCORRECT COURSE DATA, SIR!'", COL.Y); return; }
+  G.energy -= 2; G.torps--;
+  SFX.torpedo();
+  const v = courseVec(c);
+  out('TORPEDO TRACK:', COL.C);
+  for (let i = 1; ; i++) {
+    const ix = Math.round(G.sx + v.x * i), iy = Math.round(G.sy + v.y * i);
+    if (ix < 0 || ix > 7 || iy < 0 || iy > 7) { out('TORPEDO MISSED.', COL.Y); break; }
+    out(`               ${ix + 1},${iy + 1}`, COL.K);
+    G.fx = [{ x: ix, y: iy, ch: ' o ', fg: COL.W }]; render(); await sleep(80);
+    const o = G.sec[iy][ix];
+    if (o === KLING) {
+      const k = G.kl.find(k => k.x === ix && k.y === iy);
+      await explodeAt(ix, iy);
+      out('*** KLINGON DESTROYED ***', COL.G);
+      killKlingon(k); break;
+    }
+    if (o === STAR) { G.fx = null; out(`STAR AT ${ix + 1},${iy + 1} ABSORBED TORPEDO ENERGY.`, COL.Y); break; }
+    if (o === BASE) {
+      await explodeAt(ix, iy);
+      out('*** STARBASE DESTROYED ***', COL.R);
+      G.sec[iy][ix] = EMPTY; G.base = null; G.docked = false;
+      G.gal[G.qy][G.qx].b = 0; G.b9--;
+      if (G.b9 > 0) {
+        out('STARFLEET COMMAND REVIEWING YOUR RECORD TO CONSIDER', COL.R);
+        out('COURT MARTIAL!', COL.R);
+      } else {
+        out('THAT DOES IT, CAPTAIN!!  YOU ARE HEREBY RELIEVED OF COMMAND', COL.R);
+        out('AND SENTENCED TO 99 STARDATES AT HARD LABOR ON CYGNUS 12!!', COL.R);
+        G.over = 'relieved';
+      }
+      break;
+    }
+  }
+  G.fx = null; render();
+  if (G.over) return;
+  await klingonsFire();
+}
+
+async function cmdShe() {
+  if (G.dmg[SHC] < 0) { out('SHIELD CONTROL INOPERABLE.', COL.R); return; }
+  out(`ENERGY AVAILABLE = ${Math.floor(G.energy + G.shields)}`, COL.C);
+  const s = await arg('NUMBER OF UNITS TO SHIELDS'); if (s === '') return;
+  const x = Math.floor(parseFloat(s));
+  if (isNaN(x) || x < 0 || x === Math.floor(G.shields)) { out('<SHIELDS UNCHANGED>', COL.Y); return; }
+  if (x > G.energy + G.shields) {
+    out("SHIELD CONTROL REPORTS 'THIS IS NOT THE FEDERATION TREASURY.'", COL.Y);
+    out('<SHIELDS UNCHANGED>', COL.Y);
+    return;
+  }
+  G.energy = G.energy + G.shields - x; G.shields = x;
+  SFX.shields();
+  out('DEFLECTOR CONTROL ROOM REPORT:', COL.C);
+  out(`  'SHIELDS NOW AT ${x} UNITS PER YOUR COMMAND.'`, COL.C);
+  if (G.docked) out('(SHIELDS STAY DOWN WHILE DOCKED - THE STARBASE PROTECTS YOU.)', COL.K);
+}
+
+function damageTable() {
+  out('DEVICE                    STATE OF REPAIR', COL.W);
+  for (let i = 0; i < 8; i++) {
+    const d = Math.floor(G.dmg[i] * 100) / 100;
+    out(DEV[i].padEnd(26) + d.toFixed(2).padStart(6), d < 0 ? COL.R : COL.G);
+  }
+}
+async function cmdDam() {
+  if (G.dmg[DMC] < 0) out('DAMAGE CONTROL REPORT NOT AVAILABLE.', COL.R);
+  else damageTable();
+  const nd = G.dmg.filter(d => d < 0).length;
+  if (!nd) return;
+  if (!G.docked) { out('DAMAGE REPAIRS SLOWLY IN TRANSIT. DOCK AT A STARBASE FOR FULL REPAIRS.', COL.K); return; }
+  let d3 = nd * 0.1 + 0.5 * Math.random();
+  if (d3 >= 1) d3 = 0.9;
+  out('TECHNICIANS STANDING BY TO EFFECT REPAIRS TO YOUR SHIP;', COL.C);
+  out(`ESTIMATED TIME TO REPAIR: ${d3.toFixed(2)} STARDATES`, COL.C);
+  const a = await ask('WILL YOU AUTHORIZE THE REPAIR ORDER (Y/N)');
+  if (a.startsWith('Y')) {
+    for (let i = 0; i < 8; i++) if (G.dmg[i] < 0) G.dmg[i] = 0;
+    G.t += d3 + 0.1;
+    out('REPAIRS COMPLETE. ALL SYSTEMS NOMINAL.', COL.G);
+    SFX.dock();
+  }
+}
+
+async function cmdCom() {
+  if (G.dmg[CMP] < 0) { out('COMPUTER DISABLED.', COL.R); return; }
+  let s = args.length ? args.shift() : null;
+  if (s === null) {
+    out('FUNCTIONS AVAILABLE FROM LIBRARY-COMPUTER:', COL.C);
+    out('   0 = CUMULATIVE GALACTIC RECORD (CHART)', COL.w);
+    out('   1 = STATUS REPORT', COL.w);
+    out('   2 = PHOTON TORPEDO DATA', COL.w);
+    out('   3 = STARBASE NAV DATA', COL.w);
+    out('   4 = DIRECTION/DISTANCE CALCULATOR', COL.w);
+    out("   5 = GALAXY 'REGION NAME' MAP", COL.w);
+    s = await ask('COMPUTER ACTIVE AND AWAITING COMMAND');
+  }
+  if (s === '') return;
+  switch (s[0]) {
+    case '0': if (mode !== 'chart') toggleView('chart'); break;
+    case '1': {
+      out('   STATUS REPORT:', COL.C);
+      out(`KLINGON${G.k9 > 1 ? 'S' : ''} LEFT: ${G.k9}`, COL.w);
+      out(`MISSION MUST BE COMPLETED IN ${num(G.t0 + G.tlen - G.t)} STARDATES`, COL.w);
+      if (G.b9 > 0) out(`THE FEDERATION IS MAINTAINING ${G.b9} ${plural(G.b9, 'STARBASE', 'STARBASES')} IN THE GALAXY`, COL.w);
+      else {
+        out('YOUR STUPIDITY HAS LEFT YOU ON YOUR OWN IN', COL.R);
+        out('  THE GALAXY -- YOU HAVE NO STARBASES LEFT!', COL.R);
+      }
+      if (G.dmg[DMC] >= 0) damageTable();
+      break;
+    }
+    case '2': {
+      if (!G.kl.length) { out("SCIENCE OFFICER SPOCK REPORTS 'SENSORS SHOW NO ENEMY SHIPS IN THIS QUADRANT.'", COL.Y); break; }
+      out(`FROM ENTERPRISE TO KLINGON BATTLE CRUISER${G.kl.length > 1 ? 'S' : ''}:`, COL.C);
+      for (const k of G.kl)
+        out(`   SECTOR ${k.x + 1},${k.y + 1}:  DIRECTION = ${courseTo(k.x - G.sx, k.y - G.sy)}   DISTANCE = ${dist(k).toFixed(2)}`, COL.w);
+      out('(TIP: CLICK A KLINGON ON THE SCANNER TO FIRE A TORPEDO AT IT.)', COL.K);
+      break;
+    }
+    case '3': {
+      if (G.base) {
+        out('FROM ENTERPRISE TO STARBASE:', COL.C);
+        out(`   DIRECTION = ${courseTo(G.base.x - G.sx, G.base.y - G.sy)}   DISTANCE = ${Math.hypot(G.base.x - G.sx, G.base.y - G.sy).toFixed(2)}`, COL.w);
+        break;
+      }
+      out("MR. SPOCK REPORTS, 'SENSORS SHOW NO STARBASES IN THIS QUADRANT.'", COL.Y);
+      let best = null;
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const q = G.known[y][x];
+        if (!q || !q.b) continue;
+        const d = Math.max(Math.abs(x - G.qx), Math.abs(y - G.qy));
+        if (!best || d < best.d) best = { x, y, d };
+      }
+      if (best) {
+        out(`NEAREST KNOWN STARBASE: QUADRANT ${best.x + 1},${best.y + 1} (${qname(best.x, best.y)})`, COL.C);
+        out(`   COURSE ${courseTo((best.x - G.qx) * 8, (best.y - G.qy) * 8)}, WARP ${best.d}`, COL.C);
+      } else out('NO STARBASES ON RECORD. SCAN MORE OF THE GALAXY.', COL.K);
+      break;
+    }
+    case '4': {
+      out('DIRECTION/DISTANCE CALCULATOR:', COL.C);
+      out(`YOU ARE AT QUADRANT ${G.qx + 1},${G.qy + 1}  SECTOR ${G.sx + 1},${G.sy + 1}`, COL.w);
+      out('PLEASE ENTER QUADRANT COORDINATES (ENTER = YOUR POSITION).', COL.w);
+      const a = await argPair('INITIAL COORDINATES (X,Y)', [G.qx + 1, G.qy + 1]); if (!a) return;
+      const b = await argPair('FINAL COORDINATES (X,Y)'); if (!b) return;
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      if (!dx && !dy) { out('THOSE ARE THE SAME COORDINATES, CAPTAIN.', COL.Y); break; }
+      out(`DIRECTION = ${courseTo(dx, dy)}`, COL.C);
+      out(`DISTANCE = ${Math.hypot(dx, dy).toFixed(2)} QUADRANTS  (WARP ${num(Math.max(Math.abs(dx), Math.abs(dy)))} TO GET THERE)`, COL.C);
+      break;
+    }
+    case '5': {
+      out('                        THE GALAXY', COL.C);
+      for (let y = 0; y < 8; y++) {
+        const a = NAMES1[y], b = NAMES2[y];
+        out(`  ${y + 1}  ` + a.padStart(12 + a.length / 2 | 0).padEnd(24) + b.padStart(12 + b.length / 2 | 0), COL.w);
+      }
+      out('  (QUADRANTS 1-4 ARE ' + "'I'-'IV'" + ' OF THE WEST NAME, 5-8 OF THE EAST NAME)', COL.K);
+      break;
+    }
+    default: out('INVALID COMPUTER COMMAND.', COL.Y);
+  }
+}
+
+// ---------------------------------------------------------------- upper panel drawing
+function titleBar() {
+  put(0, 0, ' '.repeat(TW), COL.W, COL.b);
+  put(1, 0, 'STAR TREK', COL.Y, COL.b);
+  if (G && G.started) {
+    put(11, 0, '- USS ENTERPRISE NCC-1701 -', COL.W, COL.b);
+    const view = { bridge: 'BRIDGE', chart: 'GALACTIC CHART', help: 'HELP' }[mode] || '';
+    put(40, 0, view, COL.C, COL.b);
+    const r = qname(G.qx, G.qy);
+    put(TW - 1 - r.length, 0, r, COL.Y, COL.b);
+  } else put(11, 0, '- A TRIBUTE TO THE 1971 TEXT-MODE CLASSIC -', COL.W, COL.b);
+}
+function putQ(x, y, q, t) {
+  if (!q) { put(x, y, ' ... ', COL.K, null, t); return; }
+  put(x, y, ' ', COL.w, null, t);
+  put(x + 1, y, String(q.k), q.k ? COL.R : COL.K, null, t);
+  put(x + 2, y, String(q.b), q.b ? COL.G : COL.K, null, t);
+  put(x + 3, y, String(q.s), COL.w, null, t);
+  put(x + 4, y, ' ', COL.w, null, t);
+}
+const GLYPH = { [EMPTY]: [' . ', COL.K], [SHIP]: ['<*>', COL.W], [KLING]: ['+K+', COL.R], [BASE]: ['>!<', COL.G], [STAR]: [' * ', COL.Y] };
+
+function drawBridge() {
+  // short range scan
+  for (let x = 0; x < 8; x++) put(4 + x * 3, 1, String(x + 1), COL.K);
+  put(2, 2, '┌' + '─'.repeat(24) + '┐', COL.c);
+  put(2, 11, '└' + '─'.repeat(24) + '┘', COL.c);
+  for (let y = 0; y < 8; y++) { put(0, 3 + y, String(y + 1), COL.K); put(2, 3 + y, '│', COL.c); put(27, 3 + y, '│', COL.c); }
+  if (G.dmg[SRS] < 0) {
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 24; x++) put(3 + x, 3 + y, Math.random() < 0.3 ? '░' : ' ', COL.K);
+    put(5, 6, ' SHORT RANGE SENSORS ', COL.R, COL.k);
+    put(5, 7, '     ARE OUT!!!      ', COL.R, COL.k, null, 'bl');
+  } else {
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+      const [ch, fg] = GLYPH[G.sec[y][x]];
+      put(3 + x * 3, 3 + y, ch, fg, null, `s:${x},${y}`);
+    }
+    if (G.fx) for (const f of G.fx) put(3 + f.x * 3, 3 + f.y, f.ch, f.fg, f.bg || null);
+    put(6, 12, 'SHORT RANGE SCAN', COL.c);
+  }
+
+  // status panel
+  put(30, 1, 'SHIP STATUS', COL.Y);
+  const condCol = { RED: COL.R, YELLOW: COL.Y, GREEN: COL.G, DOCKED: COL.C }[G.cond];
+  const left = G.t0 + G.tlen - G.t;
+  const rows = [
+    ['STARDATE', G.t.toFixed(1), COL.W],
+    ['CONDITION', G.cond === 'RED' ? '*RED*' : G.cond, condCol, G.cond === 'RED' ? 'bl' : null],
+    ['QUADRANT', `${G.qx + 1},${G.qy + 1}`, COL.W],
+    ['SECTOR', `${G.sx + 1},${G.sy + 1}`, COL.W],
+    ['PHOTON TORPS', G.torps, G.torps ? COL.W : COL.R],
+    ['ENERGY', Math.floor(G.energy), G.energy < 300 ? COL.R : COL.W],
+    ['SHIELDS', Math.floor(G.shields), G.kl.length && G.shields <= 200 && !G.docked ? COL.R : COL.W,
+      G.kl.length && G.shields <= 200 && !G.docked ? 'bl' : null],
+    ['KLINGONS LEFT', G.k9, COL.R],
+    ['DAYS LEFT', left.toFixed(1), left < 5 ? COL.R : COL.W],
+    ['STARBASES', G.b9, G.b9 ? COL.G : COL.R],
+  ];
+  rows.forEach(([label, val, fg, cls], i) => {
+    put(30, 2 + i, label, COL.c);
+    put(44, 2 + i, String(val), fg, null, null, cls);
+  });
+  const nd = G.dmg.filter(d => d < 0).length;
+  if (nd) put(30, 12, `${nd} ${plural(nd, 'SYSTEM', 'SYSTEMS')} DAMAGED!`, COL.R, null, null, 'bl');
+
+  // long range scan
+  put(58, 1, 'LONG RANGE SCAN', COL.Y);
+  if (G.dmg[LRS] < 0) {
+    put(58, 4, 'SENSORS INOPERABLE', COL.R, null, null, 'bl');
+  } else {
+    put(58, 2, '┌─────┬─────┬─────┐', COL.c);
+    put(58, 4, '├─────┼─────┼─────┤', COL.c);
+    put(58, 6, '├─────┼─────┼─────┤', COL.c);
+    put(58, 8, '└─────┴─────┴─────┘', COL.c);
+    for (let j = 0; j < 3; j++) {
+      const yy = 3 + j * 2;
+      for (let i = 0; i <= 3; i++) put(58 + i * 6, yy, '│', COL.c);
+      for (let i = 0; i < 3; i++) {
+        const qx = G.qx - 1 + i, qy = G.qy - 1 + j, x = 59 + i * 6;
+        if (qx < 0 || qx > 7 || qy < 0 || qy > 7) put(x, yy, ' *** ', COL.K);
+        else if (i === 1 && j === 1) {
+          const q = G.gal[qy][qx];
+          put(x, yy, ` ${q.k}${q.b}${q.s} `, COL.k, COL.C);
+        } else putQ(x, yy, G.known[qy][qx], `q:${qx},${qy}`);
+      }
+    }
+  }
+  put(57, 10, '<*>', COL.W); put(61, 10, 'YOU', COL.K); put(67, 10, '+K+', COL.R); put(71, 10, 'KLINGON', COL.K);
+  put(57, 11, '>!<', COL.G); put(61, 11, 'BASE', COL.K); put(67, 11, ' * ', COL.Y); put(71, 11, 'STAR', COL.K);
+  put(57, 12, 'SCAN DIGITS = K B S', COL.K);
+}
+
+function drawChart() {
+  for (let x = 0; x < 8; x++) put(7 + x * 5, 1, String(x + 1), COL.K);
+  put(4, 2, '┌' + '─'.repeat(40) + '┐', COL.c);
+  put(4, 11, '└' + '─'.repeat(40) + '┘', COL.c);
+  for (let y = 0; y < 8; y++) {
+    put(2, 3 + y, String(y + 1), COL.K); put(4, 3 + y, '│', COL.c); put(45, 3 + y, '│', COL.c);
+    for (let x = 0; x < 8; x++) {
+      const cx = 5 + x * 5;
+      if (x === G.qx && y === G.qy) {
+        const q = G.gal[y][x];
+        put(cx, 3 + y, `[${q.k}${q.b}${q.s}]`, COL.k, COL.C);
+      } else putQ(cx, 3 + y, G.known[y][x], `q:${x},${y}`);
+    }
+  }
+  put(5, 12, 'CUMULATIVE GALACTIC RECORD', COL.c);
+
+  let hx = G.qx, hy = G.qy;
+  if (hoverTag && hoverTag.startsWith('q:')) [hx, hy] = hoverTag.slice(2).split(',').map(Number);
+  put(49, 1, 'EACH QUADRANT SHOWS  K B S', COL.Y);
+  put(49, 2, 'K', COL.R); put(51, 2, '= KLINGONS', COL.w);
+  put(49, 3, 'B', COL.G); put(51, 3, '= STARBASES', COL.w);
+  put(49, 4, 'S', COL.w); put(51, 4, '= STARS', COL.w);
+  put(62, 4, '... = UNSCANNED', COL.K);
+  put(49, 6, `QUADRANT ${hx + 1},${hy + 1}`, COL.W);
+  put(49, 7, qname(hx, hy), COL.Y);
+  if (hx === G.qx && hy === G.qy) {
+    put(49, 8, '(YOU ARE HERE)', COL.C);
+    put(49, 9, 'POINT AT A QUADRANT', COL.K);
+    put(49, 10, 'TO PLOT A COURSE.', COL.K);
+  } else {
+    const w = Math.max(Math.abs(hx - G.qx), Math.abs(hy - G.qy));
+    put(49, 8, `COURSE ${courseTo((hx - G.qx) * 8, (hy - G.qy) * 8)}`, COL.C);
+    put(63, 8, `WARP ${w}`, COL.C);
+    put(49, 9, `ENERGY ${w * 8 + 10}  TIME 1 DAY`, COL.w);
+    put(49, 10, 'CLICK TO ENGAGE', COL.G, null, null, 'bl');
+  }
+  put(49, 12, 'ESC OR F8 = BACK TO BRIDGE', COL.K);
+}
+
+function drawHelp() {
+  put(1, 1, 'COMMANDS: TYPE THE FIRST 3 LETTERS, OR USE THE BAR BELOW', COL.Y);
+  const cmds = [
+    ['NAV', 'SET COURSE & WARP', 'NAV 3 1'],
+    ['SRS', 'SHORT RANGE SCAN REPORT', ''],
+    ['LRS', 'LONG RANGE SCAN', ''],
+    ['PHA', 'FIRE PHASERS (ENERGY)', 'PHA 500'],
+    ['TOR', 'FIRE PHOTON TORPEDO', 'TOR 4.5'],
+    ['SHE', 'SET SHIELD LEVEL', 'SHE 800'],
+    ['DAM', 'DAMAGE REPORT / REPAIRS', ''],
+    ['COM', 'LIBRARY COMPUTER (0-5)', 'COM 2'],
+    ['CHA', 'GALACTIC CHART', ''],
+    ['XXX', 'RESIGN COMMAND', ''],
+  ];
+  cmds.forEach(([c, d, e], i) => { put(1, 2 + i, c, COL.W); put(6, 2 + i, d, COL.w); put(31, 2 + i, e, COL.K); });
+  put(1, 12, 'CLICK THE SCANNER: KLINGON = FIRE TORPEDO, SPACE = FLY THERE', COL.C);
+  put(55, 1, 'COURSE DIRECTIONS', COL.Y);
+  put(58, 3, '4  3  2', COL.W);
+  put(58, 4, ' \\ | /', COL.c);
+  put(56, 5, '5 --', COL.W); put(60, 5, '<*>', COL.W); put(63, 5, '-- 1', COL.W);
+  put(58, 6, ' / | \\', COL.c);
+  put(58, 7, '6  7  8', COL.W);
+  put(50, 9, 'WARP 1 = ONE QUADRANT (8 SECTORS)', COL.w);
+  put(50, 10, 'FRACTIONS OK: COURSE 2.5, WARP .25', COL.w);
+  put(50, 11, 'RAISE SHIELDS BEFORE A FIGHT!', COL.R);
+  put(66, 12, 'ESC = BACK', COL.K);
+}
+
+const BIG = {
+  S: [' ####', '#    ', ' ### ', '    #', '#### '], T: ['#####', '  #  ', '  #  ', '  #  ', '  #  '],
+  A: [' ### ', '#   #', '#####', '#   #', '#   #'], R: ['#### ', '#   #', '#### ', '#  # ', '#   #'],
+  E: ['#####', '#    ', '#### ', '#    ', '#####'], K: ['#   #', '#  # ', '###  ', '#  # ', '#   #'],
+};
+const SHIP_ART = [
+  [16, ',------*------,'],
+  [0, ",-------------   '---  ------'"],
+  [1, "'-------- --'      / /"],
+  [5, ",---' '-------/ /--,"],
+  [6, "'----------------'"],
+];
+function drawTitle() {
+  const word = 'STAR TREK', rowCols = [COL.Y, COL.Y, COL.Y, COL.n, COL.n];
+  let x0 = 15;
+  for (const ch of word) {
+    if (ch === ' ') { x0 += 3; continue; }
+    BIG[ch].forEach((row, r) => { for (let i = 0; i < 5; i++) if (row[i] === '#') put(x0 + i, 1 + r, '█', rowCols[r]); });
+    x0 += 6;
+  }
+  SHIP_ART.forEach(([off, s], i) => put(24 + off, 7 + i, s, COL.C));
+  center(12, 'THE USS ENTERPRISE --- NCC-1701', COL.W);
+}
+
+function render() {
+  clearBuf();
+  titleBar();
+  if (mode === 'help') drawHelp();
+  else if (mode === 'chart' && G && G.started) drawChart();
+  else if (mode === 'bridge' && G && G.started) drawBridge();
+  else drawTitle();
+  flush();
+}
+
+// ---------------------------------------------------------------- function key bar
+const FKEYS = [
+  ['F1', 'HELP', () => toggleView('help')], ['F2', 'NAV', () => submitCommand('NAV')],
+  ['F3', 'PHASER', () => submitCommand('PHA')], ['F4', 'TORPDO', () => submitCommand('TOR')],
+  ['F5', 'SHIELD', () => submitCommand('SHE')], ['F6', 'DAMAGE', () => submitCommand('DAM')],
+  ['F7', 'COMPTR', () => submitCommand('COM')], ['F8', 'CHART', () => toggleView('chart')],
+  ['F9', 'LRS', () => submitCommand('LRS')], ['F10', 'SOUND', () => toggleSound()],
+];
+function drawFkeys() {
+  const el = $('#fkeys'); el.innerHTML = '';
+  FKEYS.forEach(([k, label, fn], i) => {
+    const s = document.createElement('span');
+    const b = document.createElement('b'); b.textContent = k;
+    const e = document.createElement('em'); e.textContent = i === 9 && !soundOn ? 'MUTED' : label;
+    s.append(b, e);
+    s.addEventListener('click', ev => { ev.stopPropagation(); audio(); fn(); });
+    el.appendChild(s);
+  });
+}
+
+// ---------------------------------------------------------------- events
+inp.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const v = inp.value.trim().toUpperCase(); inp.value = '';
+    if (!pending) return;
+    if (pending.isCmd && v) { history.push(v); hIdx = history.length; }
+    answer(v);
+  } else if (e.key === 'ArrowUp' && history.length) {
+    e.preventDefault(); hIdx = Math.max(0, hIdx - 1); inp.value = history[hIdx];
+  } else if (e.key === 'ArrowDown' && history.length) {
+    e.preventDefault(); hIdx = Math.min(history.length, hIdx + 1); inp.value = history[hIdx] || '';
+  } else if (e.key.length === 1) SFX.key();
+});
+window.addEventListener('keydown', e => {
+  audio();
+  const m = /^F(\d+)$/.exec(e.key);
+  if (m && FKEYS[+m[1] - 1]) { e.preventDefault(); FKEYS[+m[1] - 1][2](); return; }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (mode === 'help' || mode === 'chart') { mode = G && G.started ? 'bridge' : 'title'; render(); }
+    else if (pending && !pending.isCmd) { out('(CANCELLED)', COL.K); answer('', false); }
+    return;
+  }
+  if (e.target !== inp && !e.ctrlKey && !e.metaKey && !e.altKey) inp.focus();
+});
+topEl.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-t]'), t = el ? el.dataset.t : null;
+  if (t !== hoverTag) { hoverTag = t; render(); }
+});
+topEl.addEventListener('mouseleave', () => { if (hoverTag) { hoverTag = null; render(); } });
+topEl.addEventListener('click', e => {
+  audio();
+  const el = e.target.closest('[data-t]');
+  if (!el || !G || !G.started || G.over) return;
+  const [kind, xy] = el.dataset.t.split(':'), [x, y] = xy.split(',').map(Number);
+  if (G.dmg[CMP] < 0) { out('LIBRARY-COMPUTER DAMAGED - ENTER COURSES MANUALLY (TYPE NAV).', COL.R); return; }
+  if (kind === 's') {
+    const o = G.sec[y][x], dx = x - G.sx, dy = y - G.sy;
+    if (o === SHIP) return;
+    if (o === KLING) submitCommand(`TOR ${courseTo(dx, dy)}`);
+    else if (o === STAR) out("MR. SPOCK: 'THAT IS A STAR, CAPTAIN. FLYING INTO IT WOULD BE... ILLOGICAL.'", COL.Y);
+    else submitCommand(`NAV ${courseTo(dx, dy)} ${Math.max(Math.abs(dx), Math.abs(dy)) / 8}`);
+  } else if (kind === 'q') {
+    if (x === G.qx && y === G.qy) return;
+    mode = 'bridge'; hoverTag = null;
+    submitCommand(`NAV ${courseTo((x - G.qx) * 8, (y - G.qy) * 8)} ${Math.max(Math.abs(x - G.qx), Math.abs(y - G.qy))}`);
+    render();
+  }
+});
+$('#term').addEventListener('click', e => { if (finePointer && !e.target.closest('#fkeys')) inp.focus(); });
+$('#pline').addEventListener('click', () => inp.focus());
+
+function fit() {
+  crt.style.fontSize = '20px';
+  const r = crt.getBoundingClientRect();
+  const s = Math.min((window.innerWidth - 16) / r.width, (window.innerHeight - 16) / r.height);
+  crt.style.fontSize = Math.max(6, 20 * s).toFixed(2) + 'px';
+}
+window.addEventListener('resize', fit);
+
+// ---------------------------------------------------------------- game flow
+async function titleText() {
+  const best = loadBest();
+  await say('      * * *   S T A R   T R E K   * * *', COL.Y);
+  await say('A FAN TRIBUTE TO THE 1971 TEXT CLASSIC AND THE "SUPER STAR TREK" DOS', COL.w);
+  await say('VERSIONS IT SPAWNED. HUNT DOWN THE KLINGON FLEET BEFORE TIME RUNS OUT.', COL.w);
+  await say('');
+  await say('SELECT YOUR RANK:', COL.C);
+  for (let i = 0; i < 3; i++) {
+    const b = best[i] ? `BEST RATING: ${best[i]}` : '';
+    await say(`  ${i + 1} = ${SKILLS[i].name.padEnd(9)}${SKILLS[i].blurb.padEnd(34)}${b}`, COL.W);
+  }
+}
+async function briefing() {
+  const s = G.b9 === 1 ? 'IS 1 STARBASE' : `ARE ${G.b9} STARBASES`;
+  await say('');
+  await say('YOUR ORDERS ARE AS FOLLOWS:', COL.Y);
+  await say(`   DESTROY THE ${G.k9} KLINGON WARSHIPS WHICH HAVE INVADED THE GALAXY`, COL.W);
+  await say(`   BEFORE THEY CAN ATTACK FEDERATION HEADQUARTERS ON STARDATE ${G.t0 + G.tlen}.`, COL.W);
+  await say(`   THIS GIVES YOU ${G.tlen} DAYS. THERE ${s} IN THE GALAXY`, COL.W);
+  await say('   FOR RESUPPLYING YOUR SHIP.', COL.W);
+  await say('');
+  await say('TIP: PRESS F1 OR TYPE HELP FOR COMMANDS. RAISE SHIELDS (SHE) BEFORE COMBAT!', COL.K);
+}
+async function endGame() {
+  render();
+  await sleep(300);
+  out('');
+  if (G.over === 'win') {
+    SFX.win();
+    const rating = Math.round(1000 * Math.pow(G.k7 / Math.max(0.1, G.t - G.t0), 2));
+    await say('CONGRATULATIONS, CAPTAIN!  THE LAST KLINGON BATTLE CRUISER', COL.G, 120);
+    await say('MENACING THE FEDERATION HAS BEEN DESTROYED.', COL.G, 120);
+    await say('');
+    await say(`YOUR EFFICIENCY RATING IS ${rating}`, COL.Y);
+    const best = loadBest();
+    if (!best[G.skill] || rating > best[G.skill]) {
+      best[G.skill] = rating; saveBest(best);
+      await say(`A NEW RECORD FOR THE RANK OF ${SKILLS[G.skill].name}!`, COL.Y);
+    }
+    const a = await ask('PLAY AGAIN (Y/N)');
+    return a.startsWith('Y') ? 'again' : 'title';
+  }
+  SFX.lose();
+  if (G.over === 'dead') {
+    flashRed(); shake(); SFX.boom();
+    await say('THE ENTERPRISE HAS BEEN DESTROYED.  THE FEDERATION WILL BE CONQUERED.', COL.R, 200);
+  } else if (G.over === 'stranded') {
+    await say("** FATAL ERROR **   YOU'VE JUST STRANDED YOUR SHIP IN SPACE.", COL.R, 60);
+    await say('YOU HAVE INSUFFICIENT MANEUVERING ENERGY, AND SHIELD CONTROL', COL.R, 60);
+    await say('IS PRESENTLY INCAPABLE OF CROSS-CIRCUITING TO ENGINE ROOM!!', COL.R, 60);
+  } else if (G.over === 'time') {
+    await say('YOU HAVE RUN OUT OF TIME. THE KLINGONS ATTACK FEDERATION HEADQUARTERS!', COL.R, 60);
+  }
+  await say(`IT IS STARDATE ${G.t.toFixed(1)}.`, COL.W);
+  await say(`THERE WERE ${G.k9} KLINGON BATTLE CRUISERS LEFT AT THE END OF YOUR MISSION.`, COL.W);
+  await say('');
+  await say('THE FEDERATION IS IN NEED OF A NEW STARSHIP COMMANDER FOR A SIMILAR', COL.Y);
+  await say("MISSION -- IF THERE IS A VOLUNTEER, LET THEM STEP FORWARD AND ENTER 'AYE'.", COL.Y);
+  const a = await ask('VOLUNTEER');
+  return a.startsWith('AYE') || a.startsWith('Y') ? 'again' : 'title';
+}
+function postCommandChecks() {
+  if (G.over) return;
+  updateCondition();
+  if (G.t > G.t0 + G.tlen) { G.over = 'time'; return; }
+  if (!G.docked && (G.energy + G.shields <= 10 || (G.energy <= 10 && G.dmg[SHC] < 0))) G.over = 'stranded';
+}
+
+async function main() {
+  drawFkeys();
+  fit();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  for (;;) {
+    G = null; mode = 'title'; render();
+    logEl.innerHTML = '';
+    await titleText();
+    let s;
+    do { s = await ask('RANK (1-3)'); if (s === '') s = '2'; } while (!['1', '2', '3'].includes(s[0]));
+    const skill = +s[0] - 1;
+    for (;;) {
+      newGame(skill);
+      await briefing();
+      await ask('PRESS ENTER TO ASSUME COMMAND');
+      enterQuadrant();
+      G.started = true; mode = 'bridge';
+      await announceQuadrant(true);
+      while (!G.over) {
+        let cmd;
+        if (queued !== null) { cmd = queued; queued = null; out(`COMMAND? ${cmd}`, COL.W); }
+        else cmd = await ask('COMMAND', true);
+        try { await doCommand(cmd); } catch (err) { console.error(err); out('*** COMPUTER MALFUNCTION: ' + err.message + ' ***', COL.R); }
+        postCommandChecks();
+        render();
+      }
+      queued = null;
+      const next = await endGame();
+      if (next !== 'again') break;
+      logEl.innerHTML = '';
+    }
+  }
+}
+main();
+</script>
+</body>
+</html>
